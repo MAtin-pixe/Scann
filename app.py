@@ -6,13 +6,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# توکن جدید ربات
+# --- توکن ربات ---
 BOT_TOKEN = "9229648147:AAHTzvai9W2plLrRf_zjZmvlt20jGtoRVeg"
 OWNER_ID = 8604564099
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
 
+# --- HTML UI ---
 HTML = """
 <!doctype html>
 <html>
@@ -61,12 +62,16 @@ HTML = """
 </html>
 """
 
-def send_tg(text):
-    try: requests.post(f"{API}/sendMessage", data={"chat_id": OWNER_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
-    except: pass
+# --- Helper Functions ---
+def send_tg(text, reply_markup=None):
+    payload = {"chat_id": OWNER_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    if reply_markup: payload["reply_markup"] = reply_markup
+    try: return requests.post(f"{API}/sendMessage", data=payload, timeout=10).json()
+    except: return {}
 
 def edit_tg(msg_id, text):
-    try: requests.post(f"{API}/editMessageText", data={"chat_id": OWNER_ID, "message_id": msg_id, "text": text, "parse_mode": "HTML"}, timeout=10)
+    payload = {"chat_id": OWNER_ID, "message_id": msg_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    try: requests.post(f"{API}/editMessageText", data=payload, timeout=10)
     except: pass
 
 def check_port(ip, port):
@@ -96,15 +101,18 @@ def submit_form(form, url, val):
         else: return requests.get(target, params=data, headers={"User-Agent": "Mozilla/5.0"}, timeout=5, verify=False)
     except: return None
 
+# --- Core Scanner Logic ---
 def run_scan(target, msg_id=None):
     if not target.startswith("http"): target = "http://" + target
+    
     def update(text):
         if msg_id: edit_tg(msg_id, text)
         print(text)
 
-    try: ip = socket.gethostbyname(urlparse(target).netloc)
+    try: 
+        ip = socket.gethostbyname(urlparse(target).netloc)
     except: 
-        if msg_id: edit_tg(msg_id, "❌ Invalid URL.")
+        if msg_id: edit_tg(msg_id, "❌ Invalid URL or DNS resolution failed.")
         return "❌ Invalid URL."
 
     update(f"⏳ <b>Scanning: {target}</b>\nIP: <code>{ip}</code>\n\n[1/3] Checking ports...")
@@ -165,6 +173,7 @@ def run_scan(target, msg_id=None):
     if msg_id: edit_tg(msg_id, report)
     return report
 
+# --- Flask Routes ---
 @app.route("/")
 def index(): return render_template_string(HTML)
 
@@ -186,7 +195,14 @@ def bot_webhook():
     if cid != OWNER_ID: return "ok"
     
     if text.startswith("/start"):
-        send_tg("👋 <b>Welcome to Matin Ultra Bot</b>\n\nType <code>/scan &lt;url&gt;</code> to scan.")
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🌐 Web Scanner", "url": "https://scann-b3tcnkf3-golden-nebula.cloady.io"}],
+                [{"text": "📖 Help", "callback_data": "help"}]
+            ]
+        }
+        send_tg("👋 <b>Welcome to Matin Ultra Bot</b>\n\nType <code>/scan &lt;url&gt;</code> to scan.", reply_markup=kb)
+        
     elif text.startswith("/scan"):
         parts = text.split()
         if len(parts) < 2:
@@ -196,6 +212,8 @@ def bot_webhook():
         target = parts[1]
         m = send_tg(f"🔍 Initializing scan for <code>{target}</code>...")
         msg_id = m.get("result", {}).get("message_id")
+        
+        # Start background thread for scanning
         threading.Thread(target=run_scan, args=(target, msg_id)).start()
         
     return "ok"
@@ -207,6 +225,4 @@ def set_webhook():
     r = requests.get(f"{API}/setWebhook?url={url}").json()
     return f"Webhook set to {url}\n{r}"
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+# Note: No app.run() here! Gunicorn handles it.
